@@ -2,61 +2,67 @@ import os
 import cvxpy as cp
 from cvxpygen import cpg
 
-# from pc_glob import n, m, tr_rad, dist_btw_pnts, x_init, x_final
-from pc_glob import *
-from pc_fcns import convex_cp, convex_cp_2
-
-def parse_problem(prb_type):
+def parse_problem(alg_type, prb_params):
     # CVXPY variables and parameters
-    x = cp.Variable(n, name='x')
-    dx = cp.Variable(n, name='dx')
+    x = cp.Variable(prb_params['x_dim'], name='x')
+    dx = cp.Variable(prb_params['x_dim'], name='dx')
 
-    xk = cp.Parameter(n, name='xk')
+    xk = cp.Parameter(prb_params['x_dim'], name='xk')
     w_ptr = cp.Parameter(nonneg=True, name='w_ptr')
 
-    hg = cp.Parameter(name='hg') 
+    if alg_type == 'prox_gradient':
+        sR = cp.Parameter(name='sR') 
+        grad_sR = cp.Parameter(prb_params['x_dim'], name='grad_sR')
 
-    if prb_type == 'lin':
-        grad_hg = cp.Parameter(n, name='grad_hg')
+        hC = cp.Parameter(name='hC') 
+        grad_hC = cp.Parameter(prb_params['x_dim'], name='grad_hC')
 
-        # Define the linearized function L(x_{k+1}, x_k) = hg + grad_hg @ (x_{k+1} - x_k) + w_ptr * cp.sum_squares(x_{k+1} - x_k)
-        obj = cp.Minimize(convex_cp_2(x) + hg + grad_hg @ dx + w_ptr * cp.sum_squares(dx))
-        # obj = cp.Minimize(hg + grad_hg @ dx + w_ptr * cp.sum_squares(dx))
-    elif prb_type == 'cvx':
-        grad_h = cp.Parameter(m, nonneg=True, name='grad_h')
-        grad_h_gk = cp.Parameter(name='grad_h_gk')
+        # Define the linearized function L(x_{k+1}, x_k)
+        obj = cp.Minimize(prb_params['convex_cp'](x) + 
+                          sR + grad_sR @ dx + 
+                          hC + grad_hC @ dx + 
+                          w_ptr * cp.sum_squares(dx))
+        
+    elif alg_type == 'prox_linear':
+        sR = cp.Parameter(name='sR') 
+        grad_sR = cp.Parameter(prb_params['x_dim'], name='grad_sR')
 
-        g = convex_cp(x)
-        obj = cp.Minimize(convex_cp_2(x) + hg + grad_h @ g - grad_h_gk + w_ptr * cp.sum_squares(dx))
-        # obj = cp.Minimize(hg + grad_h @ g - grad_h_gk + w_ptr * cp.sum_squares(dx))
+        C = cp.Parameter(prb_params['C_dim'], name='C')
+        g_C = cp.Parameter((prb_params['C_dim'], prb_params['x_dim']), name='g_C')
+
+        obj = cp.Minimize(prb_params['convex_cp'](x) + 
+                          sR + grad_sR @ dx +
+                          prb_params['h_cp'](C + g_C @ dx) +
+                          w_ptr * cp.sum_squares(dx))
+
+    elif alg_type == 'prox_convex':
+        sR = cp.Parameter(name='sR') 
+        grad_s = cp.Parameter(prb_params['R_dim'], nonneg=True, name='grad_s')
+        grad_s_Rk = cp.Parameter(name='grad_s_Rk')
+
+        R = prb_params['R_cp'](x)
+        C = cp.Parameter(prb_params['C_dim'], name='C')
+        g_C = cp.Parameter((prb_params['C_dim'], prb_params['x_dim']), name='g_C')
+
+        obj = cp.Minimize(prb_params['convex_cp'](x) + 
+                          sR + grad_s @ R - grad_s_Rk + 
+                          prb_params['h_cp'](C + g_C @ dx) + 
+                          w_ptr * cp.sum_squares(dx))
 
     # Define the linearized convex subproblem
     cons = [x == xk + dx,
-                # cp.norm(dx) <= tr_rad,
-                ]
-
-    cons += [x[0:2] == x_init,
-            #  x[-2:] == x_final,
             ]
-
-    cons += [(x[2*i] - x[2*i + 2])**2 + (x[2*i+1] - x[2*i + 3])**2 <= dist_btw_pnts**2 for i in range(m-1)]
-    
     prb = cp.Problem(obj, cons)
+
+    print('Problem parameters: ', prb.param_dict.keys())
 
     print('DPP: ', obj.is_dcp(dpp=True))
 
     return prb
 
-def generate_lin_problem():
-    prb_lin = parse_problem(prb_type='lin')
-    code_dir = "solver_lin"
-    # !rm -rf solver_lin/*
+def generate_problem(alg_type, prb_params):
+    prb_ = parse_problem(alg_type, prb_params)
+    code_dir = 'solver_' + alg_type
+    # !rm -rf solver_prox_gradient/*
     os.makedirs(code_dir, exist_ok=True)
-    cpg.generate_code(prb_lin, solver = "QOCO", wrapper = True, code_dir=code_dir)
-
-def generate_cvx_problem():
-    prb_cvx = parse_problem(prb_type='cvx')
-    code_dir = "solver_cvx"
-    # !rm -rf solver_cvx/*
-    os.makedirs(code_dir, exist_ok=True)
-    cpg.generate_code(prb_cvx, solver = "QOCO", wrapper = True, code_dir=code_dir)
+    cpg.generate_code(prb_, solver = "QOCO", wrapper = True, code_dir=code_dir)
