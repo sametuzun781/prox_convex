@@ -36,17 +36,22 @@ def parse_problem(alg_type, prb_params):
                           w_ptr * cp.sum_squares(dx))
 
     elif alg_type == 'prox_convex':
-        sR = cp.Parameter(name='sR') 
+        sR = cp.Parameter(name='sR')
+        # Positive part of grad_s: keeps r_i exact (convex) on channels with grad_s_i >= 0.
         grad_s = cp.Parameter(prb_params['R_dim'], nonneg=True, name='grad_s')
         grad_s_Rk = cp.Parameter(name='grad_s_Rk')
+        # Negative-channel linearization (paper Eq. for Phi_i): on channels with
+        # grad_s_i < 0 we replace r_i(x) by its first-order expansion around x_k.
+        # Pre-aggregated as lin_coef_neg = sum_{i in I^-} grad_s_i * grad_r_i(x_k).
+        lin_coef_neg = cp.Parameter(prb_params['x_dim'], name='lin_coef_neg')
 
         R = prb_params['R_cp'](x)
         C = cp.Parameter(prb_params['C_dim'], name='C')
         g_C = cp.Parameter((prb_params['C_dim'], prb_params['x_dim']), name='g_C')
 
-        obj = cp.Minimize(prb_params['convex_cp'](x) + 
-                          sR + grad_s @ R - grad_s_Rk + 
-                          prb_params['h_cp'](C + g_C @ dx) + 
+        obj = cp.Minimize(prb_params['convex_cp'](x) +
+                          sR + grad_s @ R - grad_s_Rk + lin_coef_neg @ dx +
+                          prb_params['h_cp'](C + g_C @ dx) +
                           w_ptr * cp.sum_squares(dx))
 
     # Define the linearized convex subproblem

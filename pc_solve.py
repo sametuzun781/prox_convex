@@ -64,6 +64,7 @@ def prox_convex(prb_params, alg_type):
 
     grad_s = _get_param(prb, "grad_s")
     grad_s_Rk = _get_param(prb, "grad_s_Rk")
+    lin_coef_neg = _get_param(prb, "lin_coef_neg")
 
     # ------------------------------------------
     # Termination tolerances
@@ -111,11 +112,31 @@ def prox_convex(prb_params, alg_type):
         elif alg_type == 'prox_convex':
             _set_param(sR, prb_params['sR'](xk.value))
 
-            if (grad_s is not None) or (grad_s_Rk is not None):
+            if (grad_s is not None) or (grad_s_Rk is not None) or (lin_coef_neg is not None):
                 R_val = np.asarray(prb_params['R_jax'](xk.value))
                 g_s_val = np.asarray(prb_params['g_s'](R_val))
-                _set_param(grad_s, g_s_val)
-                _set_param(grad_s_Rk, g_s_val @ R_val)
+
+                # Sign-dependent linearization of r_i (paper, Phi_i):
+                # grad_s_i >= 0  -> keep r_i(x) exact (positive part of grad_s);
+                # grad_s_i <  0  -> linearize r_i around x_k (negative part).
+                g_s_pos = np.maximum(g_s_val, 0.0)
+                g_s_neg = np.minimum(g_s_val, 0.0)
+
+                _set_param(grad_s, g_s_pos)
+                _set_param(grad_s_Rk, float(g_s_pos @ R_val))
+
+                if lin_coef_neg is not None:
+                    if np.any(g_s_neg < 0.0):
+                        if 'g_R' not in prb_params:
+                            raise ValueError(
+                                "prox_convex: grad_s has negative entries on some channel(s), "
+                                "but prb_params['g_R'] (Jacobian of R at x_k) was not provided. "
+                                "Provide g_R to linearize r_i on those channels."
+                            )
+                        J_R = np.asarray(prb_params['g_R'](xk.value))  # shape (R_dim, x_dim)
+                        _set_param(lin_coef_neg, g_s_neg @ J_R)
+                    else:
+                        _set_param(lin_coef_neg, np.zeros(int(xk.value.size)))
 
             _set_param(C, prb_params['C'](xk.value))
             _set_param(g_C, prb_params['g_C'](xk.value))
